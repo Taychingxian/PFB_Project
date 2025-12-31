@@ -1,3 +1,4 @@
+import streamlit as st
 import pandas as pd
 import numpy as np
 import json
@@ -11,429 +12,338 @@ from sklearn.metrics import (
     confusion_matrix, classification_report, roc_auc_score, roc_curve
 )
 import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend for Streamlit
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import seaborn as sns
+from app import BreastCancerClassifier
 
+# Page configuration
+st.set_page_config(
+    page_title="Breast Cancer Classifier",
+    page_icon="🧬",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
 
-class BreastCancerClassifier:
-    """
-    Main class for breast cancer classification using ML models
-    """
+# Custom styling
+st.markdown("""
+    <style>
+    .main {
+        padding-top: 0rem;
+    }
+    .metric-container {
+        background-color: #f0f2f6;
+        padding: 15px;
+        border-radius: 10px;
+        margin: 10px 0;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+# Title
+st.title("🧬 Breast Cancer Classification System")
+st.markdown("### Wisconsin Breast Cancer Dataset Analysis")
+st.markdown("---")
+
+# Sidebar
+with st.sidebar:
+    st.header("⚙️ Configuration")
+    st.write("Control the analysis parameters below")
     
-    def __init__(self, data_path='breast_cancer_data.csv'):
-        """
-        Initialize the classifier
-        
-        Args:
-            data_path (str): Path to the breast cancer dataset CSV
-        """
-        self.data_path = data_path
-        self.df = None
-        self.X_train = None
-        self.X_test = None
-        self.y_train = None
-        self.y_test = None
-        self.scaler = StandardScaler()
-        self.lr_model = None
-        self.svm_model = None
-        self.results = {}
-        
-    def load_data(self):
-        """
-        Load and perform initial exploration of the dataset
-        """
-        print("=" * 80)
-        print("LOADING WISCONSIN BREAST CANCER DATASET")
-        print("=" * 80)
-        
-        # Load dataset
-        self.df = pd.read_csv(self.data_path)
-        
-        print(f"\n📊 Dataset Shape: {self.df.shape}")
-        print(f"   - Samples: {self.df.shape[0]}")
-        print(f"   - Features: {self.df.shape[1] - 2}")  # Excluding ID and diagnosis
-        
-        # Display basic info
-        print("\n📋 Dataset Info:")
-        print(f"   - Columns: {list(self.df.columns[:5])}... (showing first 5)")
-        print(f"   - Data types: {self.df.dtypes.value_counts().to_dict()}")
-        
-        # Check for missing values
-        missing = self.df.isnull().sum().sum()
-        print(f"\n🔍 Missing Values: {missing}")
-        
-        # Target distribution
-        diagnosis_counts = self.df['diagnosis'].value_counts()
-        print(f"\n🎯 Target Distribution:")
-        print(f"   - Malignant (M): {diagnosis_counts.get('M', 0)} ({diagnosis_counts.get('M', 0)/len(self.df)*100:.1f}%)")
-        print(f"   - Benign (B): {diagnosis_counts.get('B', 0)} ({diagnosis_counts.get('B', 0)/len(self.df)*100:.1f}%)")
-        
-        return self.df
+    test_size = st.slider(
+        "Test Set Size (%)",
+        min_value=10,
+        max_value=40,
+        value=20,
+        step=5,
+        help="Percentage of data to use for testing"
+    ) / 100
     
-    def preprocess_data(self, test_size=0.2, random_state=42):
-        """
-        Preprocess the data: encode labels, split, and scale features
-        
-        Args:
-            test_size (float): Proportion of test set
-            random_state (int): Random seed for reproducibility
-        """
-        print("\n" + "=" * 80)
-        print("PREPROCESSING DATA")
-        print("=" * 80)
-        
-        # Separate features and target
-        X = self.df.drop(['id', 'diagnosis'], axis=1)
-        y = self.df['diagnosis'].map({'M': 1, 'B': 0})  # Malignant=1, Benign=0
-        
-        print(f"\n✂️ Splitting data: {int((1-test_size)*100)}% train, {int(test_size*100)}% test")
-        
-        # Split the data
-        self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
-            X, y, test_size=test_size, random_state=random_state, stratify=y
-        )
-        
-        print(f"   - Training set: {self.X_train.shape[0]} samples")
-        print(f"   - Test set: {self.X_test.shape[0]} samples")
-        
-        # Feature scaling (critical for SVM)
-        print(f"\n📏 Applying StandardScaler for feature normalization")
-        self.X_train_scaled = self.scaler.fit_transform(self.X_train)
-        self.X_test_scaled = self.scaler.transform(self.X_test)
-        
-        print(f"   - Features scaled to mean=0, std=1")
-        print(f"   - Original range example: [{self.X_train.iloc[:, 0].min():.2f}, {self.X_train.iloc[:, 0].max():.2f}]")
-        print(f"   - Scaled range example: [{self.X_train_scaled[:, 0].min():.2f}, {self.X_train_scaled[:, 0].max():.2f}]")
-        
-    def train_baseline_model(self):
-        """
-        Train baseline Logistic Regression model
-        """
-        print("\n" + "=" * 80)
-        print("TRAINING BASELINE MODEL: LOGISTIC REGRESSION")
-        print("=" * 80)
-        
-        # Initialize and train
-        self.lr_model = LogisticRegression(random_state=42, max_iter=10000)
-        
-        print("\n🔧 Model Configuration:")
-        print(f"   - Algorithm: Logistic Regression")
-        print(f"   - Solver: lbfgs (default)")
-        print(f"   - Max iterations: 10000")
-        
-        print("\n⏳ Training model...")
-        self.lr_model.fit(self.X_train_scaled, self.y_train)
-        print("✅ Training complete!")
-        
-        # Cross-validation
-        print("\n🔄 Performing 5-fold cross-validation...")
-        cv_scores = cross_val_score(self.lr_model, self.X_train_scaled, self.y_train, cv=5)
-        print(f"   - CV Scores: {[f'{score:.4f}' for score in cv_scores]}")
-        print(f"   - Mean CV Accuracy: {cv_scores.mean():.4f} (+/- {cv_scores.std() * 2:.4f})")
-        
-    def train_svm_model(self):
-        """
-        Train optimized SVM model with GridSearchCV
-        """
-        print("\n" + "=" * 80)
-        print("TRAINING OPTIMIZED MODEL: SUPPORT VECTOR MACHINE")
-        print("=" * 80)
-        
-        # Define parameter grid
-        param_grid = {
-            'C': [0.1, 1, 10, 100],
-            'gamma': ['scale', 'auto', 0.001, 0.01, 0.1],
-            'kernel': ['rbf', 'linear', 'poly']
-        }
-        
-        print("\n🔧 Hyperparameter Search Space:")
-        for param, values in param_grid.items():
-            print(f"   - {param}: {values}")
-        print(f"\n   Total combinations: {np.prod([len(v) for v in param_grid.values()])}")
-        
-        # Initialize GridSearchCV
-        print("\n⏳ Running GridSearchCV (5-fold CV)...")
-        print("   This may take a few minutes...")
-        
-        grid_search = GridSearchCV(
-            SVC(random_state=42, probability=True),
-            param_grid,
-            cv=5,
-            scoring='accuracy',
-            n_jobs=-1,
-            verbose=0
-        )
-        
-        grid_search.fit(self.X_train_scaled, self.y_train)
-        
-        print("✅ Grid search complete!")
-        print(f"\n🎯 Best Parameters Found:")
-        for param, value in grid_search.best_params_.items():
-            print(f"   - {param}: {value}")
-        print(f"\n   Best CV Score: {grid_search.best_score_:.4f}")
-        
-        # Store best model
-        self.svm_model = grid_search.best_estimator_
-        
-    def evaluate_models(self):
-        """
-        Comprehensive evaluation of both models
-        """
-        print("\n" + "=" * 80)
-        print("MODEL EVALUATION & COMPARISON")
-        print("=" * 80)
-        
-        models = {
-            'Logistic Regression': self.lr_model,
-            'SVM (Optimized)': self.svm_model
-        }
-        
-        self.results = {
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'dataset_info': {
-                'total_samples': len(self.df),
-                'train_samples': len(self.X_train),
-                'test_samples': len(self.X_test),
-                'num_features': self.X_train.shape[1],
-                'malignant_count': int(self.y_train.sum() + self.y_test.sum()),
-                'benign_count': int(len(self.df) - (self.y_train.sum() + self.y_test.sum()))
-            },
-            'models': {}
-        }
-        
-        for model_name, model in models.items():
-            print(f"\n{'─' * 80}")
-            print(f"📊 {model_name}")
-            print('─' * 80)
+    random_state = st.number_input(
+        "Random State",
+        min_value=0,
+        max_value=1000,
+        value=42,
+        help="For reproducibility"
+    )
+    
+    run_analysis = st.button("🚀 Run Analysis", key="run_button", use_container_width=True)
+
+# Main content
+if run_analysis:
+    with st.spinner("🔄 Running analysis... This may take a few minutes..."):
+        try:
+            # Initialize classifier
+            classifier = BreastCancerClassifier(data_path='breast_cancer_data.csv')
             
-            # Predictions
-            y_pred = model.predict(self.X_test_scaled)
-            y_pred_proba = model.predict_proba(self.X_test_scaled)[:, 1]
+            # Progress tracking
+            progress_bar = st.progress(0)
+            status_text = st.empty()
             
-            # Calculate metrics
-            accuracy = accuracy_score(self.y_test, y_pred)
-            precision = precision_score(self.y_test, y_pred)
-            recall = recall_score(self.y_test, y_pred)
-            f1 = f1_score(self.y_test, y_pred)
-            roc_auc = roc_auc_score(self.y_test, y_pred_proba)
+            # Load data
+            status_text.text("📊 Loading dataset...")
+            progress_bar.progress(10)
+            classifier.load_data()
             
-            # Confusion matrix
-            cm = confusion_matrix(self.y_test, y_pred)
-            tn, fp, fn, tp = cm.ravel()
+            # Preprocess
+            status_text.text("🔧 Preprocessing data...")
+            progress_bar.progress(30)
+            classifier.preprocess_data(test_size=test_size, random_state=int(random_state))
             
-            # Specificity
-            specificity = tn / (tn + fp)
+            # Train baseline
+            status_text.text("🤖 Training Logistic Regression...")
+            progress_bar.progress(50)
+            classifier.train_baseline_model()
             
-            # Print metrics
-            print(f"\n✨ Performance Metrics:")
-            print(f"   • Accuracy:    {accuracy:.4f} ({accuracy*100:.2f}%)")
-            print(f"   • Precision:   {precision:.4f} ({precision*100:.2f}%)")
-            print(f"   • Recall:      {recall:.4f} ({recall*100:.2f}%)")
-            print(f"   • F1-Score:    {f1:.4f}")
-            print(f"   • ROC-AUC:     {roc_auc:.4f}")
-            print(f"   • Specificity: {specificity:.4f} ({specificity*100:.2f}%)")
+            # Train SVM
+            status_text.text("⚡ Training SVM with GridSearchCV...")
+            progress_bar.progress(75)
+            classifier.train_svm_model()
             
-            print(f"\n📋 Confusion Matrix:")
-            print(f"   {'':12} Predicted B    Predicted M")
-            print(f"   Actual B    {tn:6d}         {fp:6d}")
-            print(f"   Actual M    {fn:6d}         {tp:6d}")
+            # Evaluate
+            status_text.text("📈 Evaluating models...")
+            progress_bar.progress(90)
+            classifier.evaluate_models()
             
-            print(f"\n🔍 Clinical Interpretation:")
-            print(f"   • True Negatives (TN):  {tn} - Correctly identified benign")
-            print(f"   • True Positives (TP):  {tp} - Correctly identified malignant")
-            print(f"   • False Positives (FP): {fp} - Benign classified as malignant")
-            print(f"   • False Negatives (FN): {fn} - Malignant classified as benign ⚠️")
+            # Save results
+            status_text.text("💾 Saving results...")
+            progress_bar.progress(95)
+            classifier.save_results()
             
-            # Store results
-            self.results['models'][model_name] = {
-                'accuracy': float(accuracy),
-                'precision': float(precision),
-                'recall': float(recall),
-                'f1_score': float(f1),
-                'roc_auc': float(roc_auc),
-                'specificity': float(specificity),
-                'confusion_matrix': {
-                    'true_negatives': int(tn),
-                    'false_positives': int(fp),
-                    'false_negatives': int(fn),
-                    'true_positives': int(tp)
-                }
+            progress_bar.progress(100)
+            status_text.text("✅ Analysis complete!")
+            
+            st.success("✅ Analysis completed successfully!")
+            st.markdown("---")
+            
+            # Display Results
+            st.header("📊 Results Summary")
+            
+            # Dataset Info
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Total Samples", classifier.results['dataset_info']['total_samples'])
+            with col2:
+                st.metric("Training Samples", classifier.results['dataset_info']['train_samples'])
+            with col3:
+                st.metric("Test Samples", classifier.results['dataset_info']['test_samples'])
+            with col4:
+                st.metric("Features", classifier.results['dataset_info']['num_features'])
+            
+            st.markdown("---")
+            
+            # Model Comparison
+            st.header("🎯 Model Performance Comparison")
+            
+            col1, col2 = st.columns(2)
+            
+            # Logistic Regression
+            with col1:
+                st.subheader("Logistic Regression")
+                lr_metrics = classifier.results['models']['Logistic Regression']
+                
+                metric_col1, metric_col2 = st.columns(2)
+                with metric_col1:
+                    st.metric("Accuracy", f"{lr_metrics['accuracy']:.4f}")
+                    st.metric("Precision", f"{lr_metrics['precision']:.4f}")
+                with metric_col2:
+                    st.metric("Recall", f"{lr_metrics['recall']:.4f}")
+                    st.metric("F1-Score", f"{lr_metrics['f1_score']:.4f}")
+                
+                st.metric("ROC-AUC", f"{lr_metrics['roc_auc']:.4f}")
+                st.metric("Specificity", f"{lr_metrics['specificity']:.4f}")
+            
+            # SVM
+            with col2:
+                st.subheader("SVM (Optimized)")
+                svm_metrics = classifier.results['models']['SVM (Optimized)']
+                
+                metric_col1, metric_col2 = st.columns(2)
+                with metric_col1:
+                    st.metric("Accuracy", f"{svm_metrics['accuracy']:.4f}")
+                    st.metric("Precision", f"{svm_metrics['precision']:.4f}")
+                with metric_col2:
+                    st.metric("Recall", f"{svm_metrics['recall']:.4f}")
+                    st.metric("F1-Score", f"{svm_metrics['f1_score']:.4f}")
+                
+                st.metric("ROC-AUC", f"{svm_metrics['roc_auc']:.4f}")
+                st.metric("Specificity", f"{svm_metrics['specificity']:.4f}")
+            
+            st.markdown("---")
+            
+            # Visualizations
+            st.header("📈 Visualizations")
+            
+            # Create visualizations
+            fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+            fig.suptitle('Breast Cancer Classification - Model Comparison', fontsize=16, fontweight='bold')
+            
+            models = {
+                'Logistic Regression': classifier.lr_model,
+                'SVM (Optimized)': classifier.svm_model
             }
-        
-        # Comparison
-        print(f"\n{'=' * 80}")
-        print("📊 MODEL COMPARISON SUMMARY")
-        print('=' * 80)
-        
-        lr_acc = self.results['models']['Logistic Regression']['accuracy']
-        svm_acc = self.results['models']['SVM (Optimized)']['accuracy']
-        improvement = (svm_acc - lr_acc) * 100
-        
-        print(f"\n🎯 Accuracy Improvement:")
-        print(f"   Logistic Regression: {lr_acc:.4f} ({lr_acc*100:.2f}%)")
-        print(f"   SVM (Optimized):     {svm_acc:.4f} ({svm_acc*100:.2f}%)")
-        print(f"   Improvement:         {improvement:+.2f}%")
-        
-        lr_f1 = self.results['models']['Logistic Regression']['f1_score']
-        svm_f1 = self.results['models']['SVM (Optimized)']['f1_score']
-        
-        print(f"\n🎯 F1-Score Comparison:")
-        print(f"   Logistic Regression: {lr_f1:.4f}")
-        print(f"   SVM (Optimized):     {svm_f1:.4f}")
-        print(f"   Improvement:         {(svm_f1 - lr_f1)*100:+.2f}%")
-        
-        # Winner
-        winner = 'SVM (Optimized)' if svm_acc > lr_acc else 'Logistic Regression'
-        print(f"\n🏆 Best Model: {winner}")
-        
-    def save_results(self, filename='results.json'):
-        """
-        Save results to JSON file
-        
-        Args:
-            filename (str): Output filename
-        """
-        with open(filename, 'w') as f:
-            json.dump(self.results, f, indent=4)
-        print(f"\n💾 Results saved to: {filename}")
-        
-    def visualize_results(self):
-        """
-        Create comprehensive visualizations
-        """
-        print("\n" + "=" * 80)
-        print("GENERATING VISUALIZATIONS")
-        print("=" * 80)
-        
-        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
-        fig.suptitle('Breast Cancer Classification - Model Comparison', fontsize=16, fontweight='bold')
-        
-        models = {
-            'Logistic Regression': self.lr_model,
-            'SVM (Optimized)': self.svm_model
-        }
-        
-        # 1. Performance Metrics Comparison
-        ax1 = axes[0, 0]
-        metrics = ['Accuracy', 'Precision', 'Recall', 'F1-Score']
-        lr_values = [
-            self.results['models']['Logistic Regression']['accuracy'],
-            self.results['models']['Logistic Regression']['precision'],
-            self.results['models']['Logistic Regression']['recall'],
-            self.results['models']['Logistic Regression']['f1_score']
-        ]
-        svm_values = [
-            self.results['models']['SVM (Optimized)']['accuracy'],
-            self.results['models']['SVM (Optimized)']['precision'],
-            self.results['models']['SVM (Optimized)']['recall'],
-            self.results['models']['SVM (Optimized)']['f1_score']
-        ]
-        
-        x = np.arange(len(metrics))
-        width = 0.35
-        
-        ax1.bar(x - width/2, lr_values, width, label='Logistic Regression', color='skyblue')
-        ax1.bar(x + width/2, svm_values, width, label='SVM (Optimized)', color='lightcoral')
-        ax1.set_xlabel('Metrics')
-        ax1.set_ylabel('Score')
-        ax1.set_title('Performance Metrics Comparison')
-        ax1.set_xticks(x)
-        ax1.set_xticklabels(metrics, rotation=45, ha='right')
-        ax1.legend()
-        ax1.grid(axis='y', alpha=0.3)
-        ax1.set_ylim([0.85, 1.0])
-        
-        # 2. Confusion Matrix - Logistic Regression
-        ax2 = axes[0, 1]
-        cm_lr = [
-            [self.results['models']['Logistic Regression']['confusion_matrix']['true_negatives'],
-             self.results['models']['Logistic Regression']['confusion_matrix']['false_positives']],
-            [self.results['models']['Logistic Regression']['confusion_matrix']['false_negatives'],
-             self.results['models']['Logistic Regression']['confusion_matrix']['true_positives']]
-        ]
-        sns.heatmap(cm_lr, annot=True, fmt='d', cmap='Blues', ax=ax2, cbar=False)
-        ax2.set_title('Confusion Matrix - Logistic Regression')
-        ax2.set_xlabel('Predicted')
-        ax2.set_ylabel('Actual')
-        ax2.set_xticklabels(['Benign', 'Malignant'])
-        ax2.set_yticklabels(['Benign', 'Malignant'], rotation=0)
-        
-        # 3. Confusion Matrix - SVM
-        ax3 = axes[1, 0]
-        cm_svm = [
-            [self.results['models']['SVM (Optimized)']['confusion_matrix']['true_negatives'],
-             self.results['models']['SVM (Optimized)']['confusion_matrix']['false_positives']],
-            [self.results['models']['SVM (Optimized)']['confusion_matrix']['false_negatives'],
-             self.results['models']['SVM (Optimized)']['confusion_matrix']['true_positives']]
-        ]
-        sns.heatmap(cm_svm, annot=True, fmt='d', cmap='Reds', ax=ax3, cbar=False)
-        ax3.set_title('Confusion Matrix - SVM (Optimized)')
-        ax3.set_xlabel('Predicted')
-        ax3.set_ylabel('Actual')
-        ax3.set_xticklabels(['Benign', 'Malignant'])
-        ax3.set_yticklabels(['Benign', 'Malignant'], rotation=0)
-        
-        # 4. ROC Curves
-        ax4 = axes[1, 1]
-        for model_name, model in models.items():
-            y_pred_proba = model.predict_proba(self.X_test_scaled)[:, 1]
-            fpr, tpr, _ = roc_curve(self.y_test, y_pred_proba)
-            auc = roc_auc_score(self.y_test, y_pred_proba)
-            ax4.plot(fpr, tpr, label=f'{model_name} (AUC={auc:.3f})', linewidth=2)
-        
-        ax4.plot([0, 1], [0, 1], 'k--', label='Random Classifier', linewidth=1)
-        ax4.set_xlabel('False Positive Rate')
-        ax4.set_ylabel('True Positive Rate')
-        ax4.set_title('ROC Curves Comparison')
-        ax4.legend()
-        ax4.grid(alpha=0.3)
-        
-        plt.tight_layout()
-        plt.savefig('model_comparison.png', dpi=300, bbox_inches='tight')
-        print("\n📊 Visualization saved to: model_comparison.png")
-        
-    def run_pipeline(self):
-        """
-        Execute the complete analysis pipeline
-        """
-        print("\n" + "🧬" * 40)
-        print("BREAST CANCER CLASSIFICATION - BIOINFORMATICS PROJECT")
-        print("Wisconsin Breast Cancer (Diagnostic) Dataset Analysis")
-        print("🧬" * 40)
-        
-        # Execute pipeline
-        self.load_data()
-        self.preprocess_data()
-        self.train_baseline_model()
-        self.train_svm_model()
-        self.evaluate_models()
-        self.save_results()
-        self.visualize_results()
-        
-        print("\n" + "=" * 80)
-        print("✅ PIPELINE COMPLETE!")
-        print("=" * 80)
-        print("\n📁 Generated Files:")
-        print("   • results.json - Detailed metrics and model comparison")
-        print("   • model_comparison.png - Visualization of results")
-        print("\n💡 Next Steps:")
-        print("   • Review the results.json for detailed metrics")
-        print("   • Examine model_comparison.png for visual insights")
-        print("   • Run 'streamlit run streamlit_app.py' for interactive demo")
-        print("\n" + "=" * 80 + "\n")
+            
+            # 1. Performance Metrics Comparison
+            ax1 = axes[0, 0]
+            metrics = ['Accuracy', 'Precision', 'Recall', 'F1-Score']
+            lr_values = [
+                classifier.results['models']['Logistic Regression']['accuracy'],
+                classifier.results['models']['Logistic Regression']['precision'],
+                classifier.results['models']['Logistic Regression']['recall'],
+                classifier.results['models']['Logistic Regression']['f1_score']
+            ]
+            svm_values = [
+                classifier.results['models']['SVM (Optimized)']['accuracy'],
+                classifier.results['models']['SVM (Optimized)']['precision'],
+                classifier.results['models']['SVM (Optimized)']['recall'],
+                classifier.results['models']['SVM (Optimized)']['f1_score']
+            ]
+            
+            x = np.arange(len(metrics))
+            width = 0.35
+            
+            ax1.bar(x - width/2, lr_values, width, label='Logistic Regression', color='skyblue')
+            ax1.bar(x + width/2, svm_values, width, label='SVM (Optimized)', color='lightcoral')
+            ax1.set_xlabel('Metrics')
+            ax1.set_ylabel('Score')
+            ax1.set_title('Performance Metrics Comparison')
+            ax1.set_xticks(x)
+            ax1.set_xticklabels(metrics, rotation=45, ha='right')
+            ax1.legend()
+            ax1.grid(axis='y', alpha=0.3)
+            ax1.set_ylim([0.85, 1.0])
+            
+            # 2. Confusion Matrix - Logistic Regression
+            ax2 = axes[0, 1]
+            cm_lr = [
+                [classifier.results['models']['Logistic Regression']['confusion_matrix']['true_negatives'],
+                 classifier.results['models']['Logistic Regression']['confusion_matrix']['false_positives']],
+                [classifier.results['models']['Logistic Regression']['confusion_matrix']['false_negatives'],
+                 classifier.results['models']['Logistic Regression']['confusion_matrix']['true_positives']]
+            ]
+            sns.heatmap(cm_lr, annot=True, fmt='d', cmap='Blues', ax=ax2, cbar=False)
+            ax2.set_title('Confusion Matrix - Logistic Regression')
+            ax2.set_xlabel('Predicted')
+            ax2.set_ylabel('Actual')
+            ax2.set_xticklabels(['Benign', 'Malignant'])
+            ax2.set_yticklabels(['Benign', 'Malignant'], rotation=0)
+            
+            # 3. Confusion Matrix - SVM
+            ax3 = axes[1, 0]
+            cm_svm = [
+                [classifier.results['models']['SVM (Optimized)']['confusion_matrix']['true_negatives'],
+                 classifier.results['models']['SVM (Optimized)']['confusion_matrix']['false_positives']],
+                [classifier.results['models']['SVM (Optimized)']['confusion_matrix']['false_negatives'],
+                 classifier.results['models']['SVM (Optimized)']['confusion_matrix']['true_positives']]
+            ]
+            sns.heatmap(cm_svm, annot=True, fmt='d', cmap='Reds', ax=ax3, cbar=False)
+            ax3.set_title('Confusion Matrix - SVM (Optimized)')
+            ax3.set_xlabel('Predicted')
+            ax3.set_ylabel('Actual')
+            ax3.set_xticklabels(['Benign', 'Malignant'])
+            ax3.set_yticklabels(['Benign', 'Malignant'], rotation=0)
+            
+            # 4. ROC Curves
+            ax4 = axes[1, 1]
+            for model_name, model in models.items():
+                y_pred_proba = model.predict_proba(classifier.X_test_scaled)[:, 1]
+                fpr, tpr, _ = roc_curve(classifier.y_test, y_pred_proba)
+                auc = roc_auc_score(classifier.y_test, y_pred_proba)
+                ax4.plot(fpr, tpr, label=f'{model_name} (AUC={auc:.3f})', linewidth=2)
+            
+            ax4.plot([0, 1], [0, 1], 'k--', label='Random Classifier', linewidth=1)
+            ax4.set_xlabel('False Positive Rate')
+            ax4.set_ylabel('True Positive Rate')
+            ax4.set_title('ROC Curves Comparison')
+            ax4.legend()
+            ax4.grid(alpha=0.3)
+            
+            plt.tight_layout()
+            
+            st.pyplot(fig)
+            
+            st.markdown("---")
+            
+            # Detailed Results
+            st.header("📋 Detailed Results")
+            
+            with st.expander("📄 View Full Results JSON"):
+                st.json(classifier.results)
+            
+            # Download results
+            col1, col2 = st.columns(2)
+            with col1:
+                st.download_button(
+                    label="📥 Download Results (JSON)",
+                    data=json.dumps(classifier.results, indent=4),
+                    file_name="cancer_classification_results.json",
+                    mime="application/json"
+                )
+            
+            with col2:
+                # Save figure to bytes
+                import io
+                img_bytes = io.BytesIO()
+                fig.savefig(img_bytes, format='png', dpi=300, bbox_inches='tight')
+                img_bytes.seek(0)
+                
+                st.download_button(
+                    label="📊 Download Visualization (PNG)",
+                    data=img_bytes,
+                    file_name="cancer_classification_visualization.png",
+                    mime="image/png"
+                )
+            
+            st.markdown("---")
+            
+            # Summary
+            st.header("🎯 Summary & Recommendations")
+            
+            lr_acc = classifier.results['models']['Logistic Regression']['accuracy']
+            svm_acc = classifier.results['models']['SVM (Optimized)']['accuracy']
+            improvement = (svm_acc - lr_acc) * 100
+            
+            best_model = 'SVM (Optimized)' if svm_acc > lr_acc else 'Logistic Regression'
+            
+            st.info(f"""
+            **Best Performing Model: {best_model}**
+            
+            - **Logistic Regression Accuracy**: {lr_acc:.4f} ({lr_acc*100:.2f}%)
+            - **SVM (Optimized) Accuracy**: {svm_acc:.4f} ({svm_acc*100:.2f}%)
+            - **Improvement**: {improvement:+.2f}%
+            
+            The {best_model} model shows superior performance on this dataset.
+            """)
+            
+        except Exception as e:
+            st.error(f"❌ Error during analysis: {str(e)}")
+            st.write("Please ensure all required packages are installed:")
+            st.code("pip install -r requirements.txt", language="bash")
 
-
-def main():
-    """
-    Main execution function
-    """
-    # Initialize classifier
-    classifier = BreastCancerClassifier(data_path='breast_cancer_data.csv')
+else:
+    # Initial page content
+    st.info("👈 Click the **Run Analysis** button in the sidebar to start the classification analysis.")
     
-    # Run complete pipeline
-    classifier.run_pipeline()
-
-
-if __name__ == "__main__":
-    main()
+    st.markdown("""
+    ## 📌 About This Application
+    
+    This application performs comprehensive machine learning analysis on the Wisconsin Breast Cancer dataset.
+    
+    ### Features:
+    - 🔄 **Data Loading & Exploration**: Load and analyze the breast cancer dataset
+    - 🔧 **Preprocessing**: Feature scaling and train-test splitting
+    - 🤖 **Logistic Regression**: Baseline model for comparison
+    - ⚡ **SVM with GridSearchCV**: Optimized Support Vector Machine
+    - 📊 **Comprehensive Evaluation**: Multiple metrics and visualizations
+    - 📥 **Results Export**: Download results and visualizations
+    
+    ### Dataset Information:
+    - **Samples**: 569 breast cancer cases
+    - **Features**: 30 numerical features
+    - **Target**: Malignant (M) or Benign (B)
+    
+    ### Models Compared:
+    1. **Logistic Regression** - Fast, interpretable baseline
+    2. **Support Vector Machine (SVM)** - Optimized with GridSearchCV
+    
+    """)
