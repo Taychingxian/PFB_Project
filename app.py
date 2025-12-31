@@ -1,472 +1,437 @@
-from __future__ import annotations
-
-import time
-from typing import Dict, Any
-
-import numpy as np
 import pandas as pd
-import streamlit as st
-from sklearn.datasets import load_breast_cancer
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import (
-    accuracy_score,
-    classification_report,
-    confusion_matrix,
-    precision_score,
-    recall_score,
-    f1_score,
-    roc_auc_score,
-)
-from sklearn.model_selection import GridSearchCV, train_test_split, cross_val_score
-from sklearn.pipeline import Pipeline
+import numpy as np
+import json
+from datetime import datetime
+from sklearn.model_selection import train_test_split, GridSearchCV, cross_val_score
 from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
 from sklearn.svm import SVC
-
-# Page configuration
-st.set_page_config(
-    page_title="Breast Cancer Classification",
-    page_icon="🧬",
-    layout="wide",
-    initial_sidebar_state="expanded"
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    confusion_matrix, classification_report, roc_auc_score, roc_curve
 )
-
-# Custom CSS
-st.markdown("""
-<style>
-    .stMetric {
-        background-color: #f0f2f6;
-        padding: 15px;
-        border-radius: 5px;
-    }
-</style>
-""", unsafe_allow_html=True)
-
-@dataclass
-class ModelMetrics:
-    """Container for comprehensive model evaluation metrics."""
-    model_name: str
-    accuracy: float
-    precision: float
-    recall: float
-    f1_score: float
-    roc_auc: float
-    confusion_matrix: np.ndarray
-    classification_report: str
-    training_samples: int
-    test_samples: int
-    cv_scores: Dict[str, float] = field(default_factory=dict)
-    hyperparameters: Dict[str, Any] = field(default_factory=dict)
-    training_time: float = 0.0
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert metrics to JSON-serializable dictionary."""
-        return {
-            "model_name": self.model_name,
-            "accuracy": round(self.accuracy, 4),
-            "precision": round(self.precision, 4),
-            "recall": round(self.recall, 4),
-            "f1_score": round(self.f1_score, 4),
-            "roc_auc": round(self.roc_auc, 4),
-            "confusion_matrix": self.confusion_matrix.tolist(),
-            "classification_report": self.classification_report,
-            "training_samples": self.training_samples,
-            "test_samples": self.test_samples,
-            "cv_scores": {k: round(v, 4) for k, v in self.cv_scores.items()},
-            "hyperparameters": self.hyperparameters,
-            "training_time_seconds": round(self.training_time, 2),
-        }
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 class BreastCancerClassifier:
     """
-    Systematic breast cancer classification system.
-    
-    Implements baseline and optimized models with comprehensive evaluation.
+    Main class for breast cancer classification using ML models
     """
     
-    def __init__(self, test_size: float = 0.2, random_state: int = 42):
+    def __init__(self, data_path='breast_cancer_data.csv'):
         """
-        Initialize the classifier.
+        Initialize the classifier
         
         Args:
-            test_size: Proportion of dataset for testing (default: 0.2)
-            random_state: Random seed for reproducibility (default: 42)
+            data_path (str): Path to the breast cancer dataset CSV
         """
-        self.test_size = test_size
-        self.random_state = random_state
+        self.data_path = data_path
+        self.df = None
         self.X_train = None
         self.X_test = None
         self.y_train = None
         self.y_test = None
-        self.models = {}
+        self.scaler = StandardScaler()
+        self.lr_model = None
+        self.svm_model = None
         self.results = {}
         
-        logger.info("Initializing Breast Cancer Classifier")
-        logger.info(f"Configuration: test_size={test_size}, random_state={random_state}")
+    def load_data(self):
+        """
+        Load and perform initial exploration of the dataset
+        """
+        print("=" * 80)
+        print("LOADING WISCONSIN BREAST CANCER DATASET")
+        print("=" * 80)
+        
+        # Load dataset
+        self.df = pd.read_csv(self.data_path)
+        
+        print(f"\n📊 Dataset Shape: {self.df.shape}")
+        print(f"   - Samples: {self.df.shape[0]}")
+        print(f"   - Features: {self.df.shape[1] - 2}")  # Excluding ID and diagnosis
+        
+        # Display basic info
+        print("\n📋 Dataset Info:")
+        print(f"   - Columns: {list(self.df.columns[:5])}... (showing first 5)")
+        print(f"   - Data types: {self.df.dtypes.value_counts().to_dict()}")
+        
+        # Check for missing values
+        missing = self.df.isnull().sum().sum()
+        print(f"\n🔍 Missing Values: {missing}")
+        
+        # Target distribution
+        diagnosis_counts = self.df['diagnosis'].value_counts()
+        print(f"\n🎯 Target Distribution:")
+        print(f"   - Malignant (M): {diagnosis_counts.get('M', 0)} ({diagnosis_counts.get('M', 0)/len(self.df)*100:.1f}%)")
+        print(f"   - Benign (B): {diagnosis_counts.get('B', 0)} ({diagnosis_counts.get('B', 0)/len(self.df)*100:.1f}%)")
+        
+        return self.df
     
-    def load_data(self) -> Tuple[pd.DataFrame, pd.Series]:
+    def preprocess_data(self, test_size=0.2, random_state=42):
         """
-        Load the Wisconsin Breast Cancer dataset.
-        
-        Returns:
-            Tuple of (features DataFrame, target Series)
-        """
-        logger.info("Loading Wisconsin Breast Cancer dataset...")
-        data = load_breast_cancer()
-        X = pd.DataFrame(data.data, columns=data.feature_names)
-        y = pd.Series(data.target, name="target")
-        
-        logger.info(f"Dataset loaded: {X.shape[0]} samples, {X.shape[1]} features")
-        logger.info(f"Class distribution: Malignant={sum(y==0)}, Benign={sum(y==1)}")
-        
-        return X, y
-    
-    def prepare_data(self, X: pd.DataFrame, y: pd.Series) -> None:
-        """
-        Split data into training and test sets with stratification.
+        Preprocess the data: encode labels, split, and scale features
         
         Args:
-            X: Feature matrix
-            y: Target vector
+            test_size (float): Proportion of test set
+            random_state (int): Random seed for reproducibility
         """
-        logger.info("Splitting data into train/test sets...")
+        print("\n" + "=" * 80)
+        print("PREPROCESSING DATA")
+        print("=" * 80)
+        
+        # Separate features and target
+        X = self.df.drop(['id', 'diagnosis'], axis=1)
+        y = self.df['diagnosis'].map({'M': 1, 'B': 0})  # Malignant=1, Benign=0
+        
+        print(f"\n✂️ Splitting data: {int((1-test_size)*100)}% train, {int(test_size*100)}% test")
+        
+        # Split the data
         self.X_train, self.X_test, self.y_train, self.y_test = train_test_split(
-            X, y, 
-            test_size=self.test_size, 
-            random_state=self.random_state, 
-            stratify=y
+            X, y, test_size=test_size, random_state=random_state, stratify=y
         )
         
-        logger.info(f"Training set: {len(self.X_train)} samples")
-        logger.info(f"Test set: {len(self.X_test)} samples")
-    
-    def evaluate_model(
-        self, 
-        name: str, 
-        pipeline: Pipeline, 
-        y_true: pd.Series, 
-        y_pred: np.ndarray,
-        training_time: float = 0.0,
-        cv_scores: Dict[str, float] = None,
-        hyperparams: Dict[str, Any] = None
-    ) -> ModelMetrics:
+        print(f"   - Training set: {self.X_train.shape[0]} samples")
+        print(f"   - Test set: {self.X_test.shape[0]} samples")
+        
+        # Feature scaling (critical for SVM)
+        print(f"\n📏 Applying StandardScaler for feature normalization")
+        self.X_train_scaled = self.scaler.fit_transform(self.X_train)
+        self.X_test_scaled = self.scaler.transform(self.X_test)
+        
+        print(f"   - Features scaled to mean=0, std=1")
+        print(f"   - Original range example: [{self.X_train.iloc[:, 0].min():.2f}, {self.X_train.iloc[:, 0].max():.2f}]")
+        print(f"   - Scaled range example: [{self.X_train_scaled[:, 0].min():.2f}, {self.X_train_scaled[:, 0].max():.2f}]")
+        
+    def train_baseline_model(self):
         """
-        Comprehensive model evaluation with multiple metrics.
-        
-        Args:
-            name: Model name
-            pipeline: Trained pipeline
-            y_true: True labels
-            y_pred: Predicted labels
-            training_time: Time taken to train (seconds)
-            cv_scores: Cross-validation scores
-            hyperparams: Model hyperparameters
-            
-        Returns:
-            ModelMetrics object with all evaluation results
+        Train baseline Logistic Regression model
         """
-        # Calculate probabilities for ROC-AUC (if available)
-        if hasattr(pipeline, 'predict_proba'):
-            y_proba = pipeline.predict_proba(self.X_test)[:, 1]
-            roc_auc = roc_auc_score(y_true, y_proba)
-        else:
-            # For SVM without probability, use decision function
-            y_score = pipeline.decision_function(self.X_test)
-            roc_auc = roc_auc_score(y_true, y_score)
+        print("\n" + "=" * 80)
+        print("TRAINING BASELINE MODEL: LOGISTIC REGRESSION")
+        print("=" * 80)
         
-        metrics = ModelMetrics(
-            model_name=name,
-            accuracy=accuracy_score(y_true, y_pred),
-            precision=precision_score(y_true, y_pred, zero_division=0),
-            recall=recall_score(y_true, y_pred, zero_division=0),
-            f1_score=f1_score(y_true, y_pred, zero_division=0),
-            roc_auc=roc_auc,
-            confusion_matrix=confusion_matrix(y_true, y_pred),
-            classification_report=classification_report(y_true, y_pred, target_names=['Malignant', 'Benign']),
-            training_samples=len(self.X_train),
-            test_samples=len(self.X_test),
-            cv_scores=cv_scores or {},
-            hyperparameters=hyperparams or {},
-            training_time=training_time
-        )
+        # Initialize and train
+        self.lr_model = LogisticRegression(random_state=42, max_iter=10000)
         
-        return metrics
-    
-    def train_baseline_logistic_regression(self) -> ModelMetrics:
-        """
-        Train baseline Logistic Regression model with StandardScaler.
+        print("\n🔧 Model Configuration:")
+        print(f"   - Algorithm: Logistic Regression")
+        print(f"   - Solver: lbfgs (default)")
+        print(f"   - Max iterations: 10000")
         
-        Returns:
-            ModelMetrics with evaluation results
-        """
-        logger.info("\n" + "="*60)
-        logger.info("TRAINING BASELINE: Logistic Regression")
-        logger.info("="*60)
-        
-        import time
-        start_time = time.time()
-        
-        # Create pipeline with scaling + LR
-        pipeline = Pipeline([
-            ('scaler', StandardScaler()),
-            ('classifier', LogisticRegression(
-                max_iter=1000, 
-                solver='lbfgs',
-                random_state=self.random_state,
-                class_weight='balanced'
-            ))
-        ])
-        
-        # Train model
-        logger.info("Fitting Logistic Regression...")
-        pipeline.fit(self.X_train, self.y_train)
-        training_time = time.time() - start_time
+        print("\n⏳ Training model...")
+        self.lr_model.fit(self.X_train_scaled, self.y_train)
+        print("✅ Training complete!")
         
         # Cross-validation
-        logger.info("Performing 5-fold cross-validation...")
-        cv_scores_acc = cross_val_score(pipeline, self.X_train, self.y_train, cv=5, scoring='accuracy')
-        cv_scores_f1 = cross_val_score(pipeline, self.X_train, self.y_train, cv=5, scoring='f1')
+        print("\n🔄 Performing 5-fold cross-validation...")
+        cv_scores = cross_val_score(self.lr_model, self.X_train_scaled, self.y_train, cv=5)
+        print(f"   - CV Scores: {[f'{score:.4f}' for score in cv_scores]}")
+        print(f"   - Mean CV Accuracy: {cv_scores.mean():.4f} (+/- {cv_scores.std() * 2:.4f})")
         
-        # Predictions
-        y_pred = pipeline.predict(self.X_test)
-        
-        # Evaluate
-        metrics = self.evaluate_model(
-            name="Logistic Regression (Baseline)",
-            pipeline=pipeline,
-            y_true=self.y_test,
-            y_pred=y_pred,
-            training_time=training_time,
-            cv_scores={
-                "cv_accuracy_mean": cv_scores_acc.mean(),
-                "cv_accuracy_std": cv_scores_acc.std(),
-                "cv_f1_mean": cv_scores_f1.mean(),
-                "cv_f1_std": cv_scores_f1.std(),
-            },
-            hyperparams={
-                "max_iter": 1000,
-                "solver": "lbfgs",
-                "class_weight": "balanced"
-            }
-        )
-        
-        self.models["baseline_lr"] = pipeline
-        self.results["Logistic Regression (Baseline)"] = metrics
-        
-        logger.info(f"Training completed in {training_time:.2f}s")
-        logger.info(f"Test Accuracy: {metrics.accuracy:.4f}")
-        logger.info(f"Test F1-Score: {metrics.f1_score:.4f}")
-        
-        return metrics
-    
-    def train_optimized_svm(self) -> ModelMetrics:
+    def train_svm_model(self):
         """
-        Train optimized SVM with RBF kernel using GridSearchCV.
-        
-        Returns:
-            ModelMetrics with evaluation results
+        Train optimized SVM model with GridSearchCV
         """
-        logger.info("\n" + "="*60)
-        logger.info("TRAINING OPTIMIZED MODEL: Support Vector Machine")
-        logger.info("="*60)
+        print("\n" + "=" * 80)
+        print("TRAINING OPTIMIZED MODEL: SUPPORT VECTOR MACHINE")
+        print("=" * 80)
         
-        import time
-        start_time = time.time()
-        
-        # Create pipeline
-        pipeline = Pipeline([
-            ('scaler', StandardScaler()),
-            ('classifier', SVC(kernel='rbf', random_state=self.random_state, class_weight='balanced'))
-        ])
-        
-        # Define hyperparameter grid
+        # Define parameter grid
         param_grid = {
-            'classifier__C': [0.1, 0.5, 1, 2, 5, 10],
-            'classifier__gamma': ['scale', 'auto', 0.001, 0.01, 0.1],
+            'C': [0.1, 1, 10, 100],
+            'gamma': ['scale', 'auto', 0.001, 0.01, 0.1],
+            'kernel': ['rbf', 'linear', 'poly']
         }
         
-        logger.info(f"Performing GridSearchCV with {len(param_grid['classifier__C']) * len(param_grid['classifier__gamma'])} combinations...")
-        logger.info(f"Parameter grid: C={param_grid['classifier__C']}, gamma={param_grid['classifier__gamma']}")
+        print("\n🔧 Hyperparameter Search Space:")
+        for param, values in param_grid.items():
+            print(f"   - {param}: {values}")
+        print(f"\n   Total combinations: {np.prod([len(v) for v in param_grid.values()])}")
         
-        # GridSearch with cross-validation
+        # Initialize GridSearchCV
+        print("\n⏳ Running GridSearchCV (5-fold CV)...")
+        print("   This may take a few minutes...")
+        
         grid_search = GridSearchCV(
-            pipeline,
-            param_grid=param_grid,
+            SVC(random_state=42, probability=True),
+            param_grid,
             cv=5,
-            scoring='f1',
+            scoring='accuracy',
             n_jobs=-1,
-            verbose=1,
-            return_train_score=True
+            verbose=0
         )
         
-        # Train
-        grid_search.fit(self.X_train, self.y_train)
-        training_time = time.time() - start_time
+        grid_search.fit(self.X_train_scaled, self.y_train)
         
-        best_pipeline = grid_search.best_estimator_
+        print("✅ Grid search complete!")
+        print(f"\n🎯 Best Parameters Found:")
+        for param, value in grid_search.best_params_.items():
+            print(f"   - {param}: {value}")
+        print(f"\n   Best CV Score: {grid_search.best_score_:.4f}")
         
-        logger.info(f"Best parameters found: {grid_search.best_params_}")
-        logger.info(f"Best CV F1-Score: {grid_search.best_score_:.4f}")
+        # Store best model
+        self.svm_model = grid_search.best_estimator_
         
-        # Predictions
-        y_pred = best_pipeline.predict(self.X_test)
-        
-        # Evaluate
-        metrics = self.evaluate_model(
-            name="SVM (Optimized with GridSearch)",
-            pipeline=best_pipeline,
-            y_true=self.y_test,
-            y_pred=y_pred,
-            training_time=training_time,
-            cv_scores={
-                "best_cv_f1_score": grid_search.best_score_,
-                "cv_mean_test_score": grid_search.cv_results_['mean_test_score'].mean(),
-                "cv_std_test_score": grid_search.cv_results_['std_test_score'].mean(),
-            },
-            hyperparams=grid_search.best_params_
-        )
-        
-        self.models["optimized_svm"] = best_pipeline
-        self.results["SVM (Optimized with GridSearch)"] = metrics
-        
-        logger.info(f"Training completed in {training_time:.2f}s")
-        logger.info(f"Test Accuracy: {metrics.accuracy:.4f}")
-        logger.info(f"Test F1-Score: {metrics.f1_score:.4f}")
-        
-        return metrics
-
-
-
-        logger.info(f"Training completed in {training_time:.2f}s")
-        logger.info(f"Test Accuracy: {metrics.accuracy:.4f}")
-        logger.info(f"Test F1-Score: {metrics.f1_score:.4f}")
-        
-        return metrics
-    
-    def print_comparative_report(self) -> None:
-        """Print comprehensive comparative analysis of all models."""
-        logger.info("\n" + "="*80)
-        logger.info("COMPREHENSIVE MODEL COMPARISON REPORT")
-        logger.info("="*80)
-        
-        # Create comparison table
-        print("\n┌" + "─"*78 + "┐")
-        print("│{:^78}│".format("PERFORMANCE METRICS"))
-        print("├" + "─"*78 + "┤")
-        print("│ {:<35} │ {:>18} │ {:>18} │".format("Metric", "Baseline LR", "Optimized SVM"))
-        print("├" + "─"*78 + "┤")
-        
-        lr_metrics = self.results.get("Logistic Regression (Baseline)")
-        svm_metrics = self.results.get("SVM (Optimized with GridSearch)")
-        
-        if lr_metrics and svm_metrics:
-            metrics_to_compare = [
-                ("Accuracy", "accuracy"),
-                ("Precision", "precision"),
-                ("Recall", "recall"),
-                ("F1-Score", "f1_score"),
-                ("ROC-AUC", "roc_auc"),
-            ]
-            
-            for label, attr in metrics_to_compare:
-                lr_val = getattr(lr_metrics, attr)
-                svm_val = getattr(svm_metrics, attr)
-                winner = "✓" if svm_val > lr_val else ("✓" if lr_val > svm_val else "=")
-                
-                print("│ {:<35} │ {:>18.4f} │ {:>17.4f}{} │".format(
-                    label, lr_val, svm_val, winner
-                ))
-            
-            print("├" + "─"*78 + "┤")
-            print("│ {:<35} │ {:>18.2f}s │ {:>17.2f}s │".format(
-                "Training Time", lr_metrics.training_time, svm_metrics.training_time
-            ))
-            print("└" + "─"*78 + "┘")
-            
-            # Confusion matrices
-            print("\n" + "="*80)
-            print("CONFUSION MATRICES")
-            print("="*80)
-            
-            for name, metrics in self.results.items():
-                print(f"\n{name}:")
-                print("                Predicted")
-                print("              Malignant  Benign")
-                cm = metrics.confusion_matrix
-                print(f"Actual  Malignant    {cm[0,0]:>3}      {cm[0,1]:>3}")
-                print(f"        Benign       {cm[1,0]:>3}      {cm[1,1]:>3}")
-                
-                # Calculate specifics
-                tn, fp, fn, tp = cm.ravel()
-                print(f"\n  True Negatives (TN): {tn}  |  False Positives (FP): {fp}")
-                print(f"  False Negatives (FN): {fn}  |  True Positives (TP): {tp}")
-            
-            # Classification reports
-            print("\n" + "="*80)
-            print("DETAILED CLASSIFICATION REPORTS")
-            print("="*80)
-            
-            for name, metrics in self.results.items():
-                print(f"\n{name}:")
-                print(metrics.classification_report)
-    
-    def save_results(self, output_path: str = "results.json") -> None:
+    def evaluate_models(self):
         """
-        Save all results to JSON file.
+        Comprehensive evaluation of both models
+        """
+        print("\n" + "=" * 80)
+        print("MODEL EVALUATION & COMPARISON")
+        print("=" * 80)
+        
+        models = {
+            'Logistic Regression': self.lr_model,
+            'SVM (Optimized)': self.svm_model
+        }
+        
+        self.results = {
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'dataset_info': {
+                'total_samples': len(self.df),
+                'train_samples': len(self.X_train),
+                'test_samples': len(self.X_test),
+                'num_features': self.X_train.shape[1],
+                'malignant_count': int(self.y_train.sum() + self.y_test.sum()),
+                'benign_count': int(len(self.df) - (self.y_train.sum() + self.y_test.sum()))
+            },
+            'models': {}
+        }
+        
+        for model_name, model in models.items():
+            print(f"\n{'─' * 80}")
+            print(f"📊 {model_name}")
+            print('─' * 80)
+            
+            # Predictions
+            y_pred = model.predict(self.X_test_scaled)
+            y_pred_proba = model.predict_proba(self.X_test_scaled)[:, 1]
+            
+            # Calculate metrics
+            accuracy = accuracy_score(self.y_test, y_pred)
+            precision = precision_score(self.y_test, y_pred)
+            recall = recall_score(self.y_test, y_pred)
+            f1 = f1_score(self.y_test, y_pred)
+            roc_auc = roc_auc_score(self.y_test, y_pred_proba)
+            
+            # Confusion matrix
+            cm = confusion_matrix(self.y_test, y_pred)
+            tn, fp, fn, tp = cm.ravel()
+            
+            # Specificity
+            specificity = tn / (tn + fp)
+            
+            # Print metrics
+            print(f"\n✨ Performance Metrics:")
+            print(f"   • Accuracy:    {accuracy:.4f} ({accuracy*100:.2f}%)")
+            print(f"   • Precision:   {precision:.4f} ({precision*100:.2f}%)")
+            print(f"   • Recall:      {recall:.4f} ({recall*100:.2f}%)")
+            print(f"   • F1-Score:    {f1:.4f}")
+            print(f"   • ROC-AUC:     {roc_auc:.4f}")
+            print(f"   • Specificity: {specificity:.4f} ({specificity*100:.2f}%)")
+            
+            print(f"\n📋 Confusion Matrix:")
+            print(f"   {'':12} Predicted B    Predicted M")
+            print(f"   Actual B    {tn:6d}         {fp:6d}")
+            print(f"   Actual M    {fn:6d}         {tp:6d}")
+            
+            print(f"\n🔍 Clinical Interpretation:")
+            print(f"   • True Negatives (TN):  {tn} - Correctly identified benign")
+            print(f"   • True Positives (TP):  {tp} - Correctly identified malignant")
+            print(f"   • False Positives (FP): {fp} - Benign classified as malignant")
+            print(f"   • False Negatives (FN): {fn} - Malignant classified as benign ⚠️")
+            
+            # Store results
+            self.results['models'][model_name] = {
+                'accuracy': float(accuracy),
+                'precision': float(precision),
+                'recall': float(recall),
+                'f1_score': float(f1),
+                'roc_auc': float(roc_auc),
+                'specificity': float(specificity),
+                'confusion_matrix': {
+                    'true_negatives': int(tn),
+                    'false_positives': int(fp),
+                    'false_negatives': int(fn),
+                    'true_positives': int(tp)
+                }
+            }
+        
+        # Comparison
+        print(f"\n{'=' * 80}")
+        print("📊 MODEL COMPARISON SUMMARY")
+        print('=' * 80)
+        
+        lr_acc = self.results['models']['Logistic Regression']['accuracy']
+        svm_acc = self.results['models']['SVM (Optimized)']['accuracy']
+        improvement = (svm_acc - lr_acc) * 100
+        
+        print(f"\n🎯 Accuracy Improvement:")
+        print(f"   Logistic Regression: {lr_acc:.4f} ({lr_acc*100:.2f}%)")
+        print(f"   SVM (Optimized):     {svm_acc:.4f} ({svm_acc*100:.2f}%)")
+        print(f"   Improvement:         {improvement:+.2f}%")
+        
+        lr_f1 = self.results['models']['Logistic Regression']['f1_score']
+        svm_f1 = self.results['models']['SVM (Optimized)']['f1_score']
+        
+        print(f"\n🎯 F1-Score Comparison:")
+        print(f"   Logistic Regression: {lr_f1:.4f}")
+        print(f"   SVM (Optimized):     {svm_f1:.4f}")
+        print(f"   Improvement:         {(svm_f1 - lr_f1)*100:+.2f}%")
+        
+        # Winner
+        winner = 'SVM (Optimized)' if svm_acc > lr_acc else 'Logistic Regression'
+        print(f"\n🏆 Best Model: {winner}")
+        
+    def save_results(self, filename='results.json'):
+        """
+        Save results to JSON file
         
         Args:
-            output_path: Path to output JSON file
+            filename (str): Output filename
         """
-        output_data = {
-            "experiment_metadata": {
-                "timestamp": datetime.now().isoformat(),
-                "dataset": "Wisconsin Breast Cancer (Diagnostic)",
-                "test_size": self.test_size,
-                "random_state": self.random_state,
-                "total_samples": len(self.X_train) + len(self.X_test),
-            },
-            "models": {
-                name: metrics.to_dict() 
-                for name, metrics in self.results.items()
-            }
+        with open(filename, 'w') as f:
+            json.dump(self.results, f, indent=4)
+        print(f"\n💾 Results saved to: {filename}")
+        
+    def visualize_results(self):
+        """
+        Create comprehensive visualizations
+        """
+        print("\n" + "=" * 80)
+        print("GENERATING VISUALIZATIONS")
+        print("=" * 80)
+        
+        fig, axes = plt.subplots(2, 2, figsize=(15, 12))
+        fig.suptitle('Breast Cancer Classification - Model Comparison', fontsize=16, fontweight='bold')
+        
+        models = {
+            'Logistic Regression': self.lr_model,
+            'SVM (Optimized)': self.svm_model
         }
         
-        output_file = Path(output_path)
-        with output_file.open('w', encoding='utf-8') as f:
-            json.dump(output_data, f, indent=2)
+        # 1. Performance Metrics Comparison
+        ax1 = axes[0, 0]
+        metrics = ['Accuracy', 'Precision', 'Recall', 'F1-Score']
+        lr_values = [
+            self.results['models']['Logistic Regression']['accuracy'],
+            self.results['models']['Logistic Regression']['precision'],
+            self.results['models']['Logistic Regression']['recall'],
+            self.results['models']['Logistic Regression']['f1_score']
+        ]
+        svm_values = [
+            self.results['models']['SVM (Optimized)']['accuracy'],
+            self.results['models']['SVM (Optimized)']['precision'],
+            self.results['models']['SVM (Optimized)']['recall'],
+            self.results['models']['SVM (Optimized)']['f1_score']
+        ]
         
-        logger.info(f"\n✓ Results saved to: {output_file.absolute()}")
+        x = np.arange(len(metrics))
+        width = 0.35
+        
+        ax1.bar(x - width/2, lr_values, width, label='Logistic Regression', color='skyblue')
+        ax1.bar(x + width/2, svm_values, width, label='SVM (Optimized)', color='lightcoral')
+        ax1.set_xlabel('Metrics')
+        ax1.set_ylabel('Score')
+        ax1.set_title('Performance Metrics Comparison')
+        ax1.set_xticks(x)
+        ax1.set_xticklabels(metrics, rotation=45, ha='right')
+        ax1.legend()
+        ax1.grid(axis='y', alpha=0.3)
+        ax1.set_ylim([0.85, 1.0])
+        
+        # 2. Confusion Matrix - Logistic Regression
+        ax2 = axes[0, 1]
+        cm_lr = [
+            [self.results['models']['Logistic Regression']['confusion_matrix']['true_negatives'],
+             self.results['models']['Logistic Regression']['confusion_matrix']['false_positives']],
+            [self.results['models']['Logistic Regression']['confusion_matrix']['false_negatives'],
+             self.results['models']['Logistic Regression']['confusion_matrix']['true_positives']]
+        ]
+        sns.heatmap(cm_lr, annot=True, fmt='d', cmap='Blues', ax=ax2, cbar=False)
+        ax2.set_title('Confusion Matrix - Logistic Regression')
+        ax2.set_xlabel('Predicted')
+        ax2.set_ylabel('Actual')
+        ax2.set_xticklabels(['Benign', 'Malignant'])
+        ax2.set_yticklabels(['Benign', 'Malignant'], rotation=0)
+        
+        # 3. Confusion Matrix - SVM
+        ax3 = axes[1, 0]
+        cm_svm = [
+            [self.results['models']['SVM (Optimized)']['confusion_matrix']['true_negatives'],
+             self.results['models']['SVM (Optimized)']['confusion_matrix']['false_positives']],
+            [self.results['models']['SVM (Optimized)']['confusion_matrix']['false_negatives'],
+             self.results['models']['SVM (Optimized)']['confusion_matrix']['true_positives']]
+        ]
+        sns.heatmap(cm_svm, annot=True, fmt='d', cmap='Reds', ax=ax3, cbar=False)
+        ax3.set_title('Confusion Matrix - SVM (Optimized)')
+        ax3.set_xlabel('Predicted')
+        ax3.set_ylabel('Actual')
+        ax3.set_xticklabels(['Benign', 'Malignant'])
+        ax3.set_yticklabels(['Benign', 'Malignant'], rotation=0)
+        
+        # 4. ROC Curves
+        ax4 = axes[1, 1]
+        for model_name, model in models.items():
+            y_pred_proba = model.predict_proba(self.X_test_scaled)[:, 1]
+            fpr, tpr, _ = roc_curve(self.y_test, y_pred_proba)
+            auc = roc_auc_score(self.y_test, y_pred_proba)
+            ax4.plot(fpr, tpr, label=f'{model_name} (AUC={auc:.3f})', linewidth=2)
+        
+        ax4.plot([0, 1], [0, 1], 'k--', label='Random Classifier', linewidth=1)
+        ax4.set_xlabel('False Positive Rate')
+        ax4.set_ylabel('True Positive Rate')
+        ax4.set_title('ROC Curves Comparison')
+        ax4.legend()
+        ax4.grid(alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig('model_comparison.png', dpi=300, bbox_inches='tight')
+        print("\n📊 Visualization saved to: model_comparison.png")
+        plt.show()
+        
+    def run_pipeline(self):
+        """
+        Execute the complete analysis pipeline
+        """
+        print("\n" + "🧬" * 40)
+        print("BREAST CANCER CLASSIFICATION - BIOINFORMATICS PROJECT")
+        print("Wisconsin Breast Cancer (Diagnostic) Dataset Analysis")
+        print("🧬" * 40)
+        
+        # Execute pipeline
+        self.load_data()
+        self.preprocess_data()
+        self.train_baseline_model()
+        self.train_svm_model()
+        self.evaluate_models()
+        self.save_results()
+        self.visualize_results()
+        
+        print("\n" + "=" * 80)
+        print("✅ PIPELINE COMPLETE!")
+        print("=" * 80)
+        print("\n📁 Generated Files:")
+        print("   • results.json - Detailed metrics and model comparison")
+        print("   • model_comparison.png - Visualization of results")
+        print("\n💡 Next Steps:")
+        print("   • Review the results.json for detailed metrics")
+        print("   • Examine model_comparison.png for visual insights")
+        print("   • Run 'streamlit run streamlit_app.py' for interactive demo")
+        print("\n" + "=" * 80 + "\n")
 
 
 def main():
-    """Main execution function."""
-    print("\n" + "="*80)
-    print("{:^80}".format("BREAST CANCER CLASSIFICATION SYSTEM"))
-    print("{:^80}".format("Systematic Comparison: Logistic Regression vs SVM"))
-    print("="*80)
-    
+    """
+    Main execution function
+    """
     # Initialize classifier
-    classifier = BreastCancerClassifier(test_size=0.2, random_state=42)
+    classifier = BreastCancerClassifier(data_path='breast_cancer_data.csv')
     
-    # Load and prepare data
-    X, y = classifier.load_data()
-    classifier.prepare_data(X, y)
-    
-    # Train baseline model
-    lr_metrics = classifier.train_baseline_logistic_regression()
-    
-    # Train optimized model
-    svm_metrics = classifier.train_optimized_svm()
-    
-    # Print comparative report
-    classifier.print_comparative_report()
-    
-    # Save results
-    classifier.save_results("results.json")
-    
-    logger.info("\n" + "="*80)
-    logger.info("EXPERIMENT COMPLETED SUCCESSFULLY")
-    logger.info("="*80)
+    # Run complete pipeline
+    classifier.run_pipeline()
 
 
 if __name__ == "__main__":
