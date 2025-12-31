@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import json
-import logging
-from dataclasses import dataclass, field
-from datetime import datetime
-from pathlib import Path
-from typing import Dict, Tuple, Any
+import time
+from typing import Dict, Any
 
 import numpy as np
 import pandas as pd
+import streamlit as st
 from sklearn.datasets import load_breast_cancer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
@@ -25,13 +22,24 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+# Page configuration
+st.set_page_config(
+    page_title="Breast Cancer Classification",
+    page_icon="🧬",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
-logger = logging.getLogger(__name__)
+
+# Custom CSS
+st.markdown("""
+<style>
+    .stMetric {
+        background-color: #f0f2f6;
+        padding: 15px;
+        border-radius: 5px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 @dataclass
 class ModelMetrics:
