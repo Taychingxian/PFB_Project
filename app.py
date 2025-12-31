@@ -1,29 +1,3 @@
-
-"""
-Breast Cancer Classification: Systematic Comparison of ML Models
-==================================================================
-Project: Bioinformatics Mini Project - Breast Cancer Diagnosis
-
-Objective:
-    Compare baseline Logistic Regression against tuned Support Vector Machine
-    for binary classification of breast tumors (malignant vs. benign).
-
-Dataset:
-    Wisconsin Breast Cancer (Diagnostic) Dataset
-    - 569 samples with 30 numeric features
-    - Target: 0 = malignant, 1 = benign
-
-Methodology:
-    1. Data Loading & Preprocessing
-    2. Baseline Model: Logistic Regression with StandardScaler
-    3. Optimized Model: SVM with RBF kernel, GridSearchCV for hyperparameters
-    4. Comprehensive Evaluation: Accuracy, Precision, Recall, F1, Confusion Matrix
-    5. Comparative Analysis & Results Export
-
-Author: TAY CHING XIAN
-Run: python app.py
-"""
-
 from __future__ import annotations
 
 import json
