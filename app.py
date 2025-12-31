@@ -10,6 +10,8 @@ from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     confusion_matrix, classification_report, roc_auc_score, roc_curve
 )
+import matplotlib
+matplotlib.use('Agg')  # Use non-interactive backend for Streamlit
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -390,7 +392,6 @@ class BreastCancerClassifier:
         plt.tight_layout()
         plt.savefig('model_comparison.png', dpi=300, bbox_inches='tight')
         print("\n📊 Visualization saved to: model_comparison.png")
-        plt.show()
         
     def run_pipeline(self):
         """
