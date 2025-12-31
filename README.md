@@ -115,5 +115,4 @@ For a script-based flow, create `train.py` that loads data, trains both models, 
 
 ---
 
-## 11. Author
-**TAY CHING XIAN** — Bioinformatics Mini Project.
+
