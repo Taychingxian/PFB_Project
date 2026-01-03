@@ -485,8 +485,9 @@ with st.sidebar:
 if run_analysis:
     with st.spinner("🔄 Running analysis... This may take a few minutes..."):
         try:
-            # Initialize classifier
-            classifier = BreastCancerClassifier(data_path='breast_cancer_data.csv')
+            # Initialize classifier with absolute path
+            data_path = Path(__file__).parent / 'breast_cancer_data.csv'
+            classifier = BreastCancerClassifier(data_path=data_path)
 
             config = TrainConfig(
                 test_size=float(test_size),
