@@ -102,13 +102,31 @@ class BreastCancerClassifier:
         }
 
     def load_data(self) -> pd.DataFrame:
+        """Load dataset from CSV if present; otherwise fall back to sklearn's
+        built-in breast cancer dataset. If writing the CSV fails (e.g., due to
+        read-only filesystem), proceed without saving and record the source.
+
+        Returns a pandas DataFrame with a 'diagnosis' column ('M'/'B').
+        """
+
+        used_fallback = False
+        saved_csv = False
+
         if not self.data_path.exists():
+            # Fallback to sklearn dataset and try to persist for future runs
             data = load_breast_cancer()
             df = pd.DataFrame(data.data, columns=data.feature_names)
             df.insert(0, "id", np.arange(1, len(df) + 1))
             df.insert(1, "diagnosis", pd.Series(data.target).map({0: "M", 1: "B"}))
-            self.data_path.parent.mkdir(parents=True, exist_ok=True)
-            df.to_csv(self.data_path, index=False)
+
+            used_fallback = True
+            # Attempt to save locally; ignore failures in read-only environments
+            try:
+                self.data_path.parent.mkdir(parents=True, exist_ok=True)
+                df.to_csv(self.data_path, index=False)
+                saved_csv = True
+            except Exception:
+                saved_csv = False
         else:
             df = pd.read_csv(self.data_path)
         self.df = df
@@ -131,6 +149,8 @@ class BreastCancerClassifier:
         self.results["run_info"] = {
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "data_path": str(self.data_path),
+            "dataset_source": "sklearn_fallback" if used_fallback else "csv_local",
+            "csv_saved": bool(saved_csv),
         }
         self.results["dataset_info"] = {
             "total_samples": int(df.shape[0]),
@@ -512,6 +532,20 @@ if run_analysis:
             status_text.text("📊 Loading dataset...")
             progress_bar.progress(10)
             classifier.load_data()
+
+            # Inform user about data source/fallback
+            run_info = classifier.results.get("run_info", {})
+            if run_info.get("dataset_source") == "sklearn_fallback":
+                if run_info.get("csv_saved"):
+                    st.info(
+                        "Dataset CSV was missing, so a dataset was generated from sklearn and saved as 'breast_cancer_data.csv'.",
+                        icon="ℹ️",
+                    )
+                else:
+                    st.info(
+                        "Dataset CSV was missing and the environment is read-only. Using sklearn's built-in dataset without saving to disk.",
+                        icon="ℹ️",
+                    )
             
             # Preprocess
             status_text.text("🔧 Preprocessing data...")
