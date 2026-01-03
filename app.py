@@ -485,8 +485,13 @@ with st.sidebar:
 if run_analysis:
     with st.spinner("🔄 Running analysis... This may take a few minutes..."):
         try:
-            # Initialize classifier with absolute path
-            data_path = Path(__file__).parent / 'breast_cancer_data.csv'
+            # Initialize classifier - works in cloud and local environments
+            try:
+                # Try to use script directory if available
+                data_path = Path(__file__).parent / 'breast_cancer_data.csv'
+            except NameError:
+                # Fallback for cloud environments where __file__ is not defined
+                data_path = Path('breast_cancer_data.csv')
             classifier = BreastCancerClassifier(data_path=data_path)
 
             config = TrainConfig(
