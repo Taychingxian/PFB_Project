@@ -1,0 +1,75 @@
+{
+  "experiment_metadata": {
+    "timestamp": "2025-12-31T15:31:07.449473",
+    "dataset": "Wisconsin Breast Cancer (Diagnostic)",
+    "test_size": 0.2,
+    "random_state": 42,
+    "total_samples": 569
+  },
+  "models": {
+    "Logistic Regression (Baseline)": {
+      "model_name": "Logistic Regression (Baseline)",
+      "accuracy": 0.9561,
+      "precision": 0.9855,
+      "recall": 0.9444,
+      "f1_score": 0.9645,
+      "roc_auc": 0.9954,
+      "confusion_matrix": [
+        [
+          41,
+          1
+        ],
+        [
+          4,
+          68
+        ]
+      ],
+      "classification_report": "              precision    recall  f1-score   support\n\n   Malignant       0.91      0.98      0.94        42\n      Benign       0.99      0.94      0.96        72\n\n    accuracy                           0.96       114\n   macro avg       0.95      0.96      0.95       114\nweighted avg       0.96      0.96      0.96       114\n",
+      "training_samples": 455,
+      "test_samples": 114,
+      "cv_scores": {
+        "cv_accuracy_mean": 0.9758,
+        "cv_accuracy_std": 0.0146,
+        "cv_f1_mean": 0.9808,
+        "cv_f1_std": 0.0116
+      },
+      "hyperparameters": {
+        "max_iter": 1000,
+        "solver": "lbfgs",
+        "class_weight": "balanced"
+      },
+      "training_time_seconds": 0.03
+    },
+    "SVM (Optimized with GridSearch)": {
+      "model_name": "SVM (Optimized with GridSearch)",
+      "accuracy": 0.9561,
+      "precision": 0.9855,
+      "recall": 0.9444,
+      "f1_score": 0.9645,
+      "roc_auc": 0.9957,
+      "confusion_matrix": [
+        [
+          41,
+          1
+        ],
+        [
+          4,
+          68
+        ]
+      ],
+      "classification_report": "              precision    recall  f1-score   support\n\n   Malignant       0.91      0.98      0.94        42\n      Benign       0.99      0.94      0.96        72\n\n    accuracy                           0.96       114\n   macro avg       0.95      0.96      0.95       114\nweighted avg       0.96      0.96      0.96       114\n",
+      "training_samples": 455,
+      "test_samples": 114,
+      "cv_scores": {
+        "best_cv_f1_score": 0.9861,
+        "cv_mean_test_score": 0.9685,
+        "cv_std_test_score": 0.0143
+      },
+      "hyperparameters": {
+        "classifier__C": 5,
+        "classifier__gamma": 0.01
+      },
+      "training_time_seconds": 5.26
+    }
+  }
+}
