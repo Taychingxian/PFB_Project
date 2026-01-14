@@ -1,6 +1,6 @@
 {
   "experiment_metadata": {
-    "timestamp": "2025-12-31T15:31:07.449473",
+    "timestamp": "2025-12-31T15:56:37.486463",
     "dataset": "Wisconsin Breast Cancer (Diagnostic)",
     "test_size": 0.2,
     "random_state": 42,
@@ -38,7 +38,7 @@
         "solver": "lbfgs",
         "class_weight": "balanced"
       },
-      "training_time_seconds": 0.03
+      "training_time_seconds": 0.01
     },
     "SVM (Optimized with GridSearch)": {
       "model_name": "SVM (Optimized with GridSearch)",
@@ -69,7 +69,7 @@
         "classifier__C": 5,
         "classifier__gamma": 0.01
       },
-      "training_time_seconds": 5.26
+      "training_time_seconds": 8.05
     }
   }
 }
